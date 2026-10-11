@@ -1,5 +1,6 @@
 from db import is_whitelisted
 from heuristics import RULES
+from heuristics import check_suspicious_extension
 
 
 def score_process(exe, name):
