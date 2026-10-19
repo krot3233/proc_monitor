@@ -3,8 +3,9 @@ from datetime import datetime
 
 import psutil
 
-from config import ALERT_THRESHOLD, WEIGHTS
+from config import WARNING_SCALE, WEIGHTS
 from db import is_whitelisted, log_event
+from models import ProcInfo
 from scoring import score_process
 
 
@@ -14,64 +15,74 @@ def format_time(create_time):
     return "--:--:--"
 
 
-def monitor_once(seen):
-    current = set()
-    items = []
+def build_info(proc):
+    try:
+        with proc.oneshot():
+            parent = proc.parent()
+            try:
+                exe = proc.exe() or ""
+            except psutil.AccessDenied:
+                exe = ""
+            return ProcInfo(
+                pid=proc.pid,
+                name=proc.name(),
+                exe=exe if exe else "",
+                cmdline=proc.cmdline(),
+                ppid=proc.ppid(),
+                parent_name=parent.name() if parent else "",
+                create_time=proc.create_time(),
+            )
+    except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+        return None
 
-    for proc in psutil.process_iter(["pid", "name", "create_time", "exe"]):
-        try:
-            info = proc.info
-            pid = int(info.get("pid", -1))
-            create_time = float(info.get("create_time", 0.0))
-        except (psutil.AccessDenied, psutil.NoSuchProcess, TypeError, ValueError):
+
+def monitor_once(seen, startup=False):
+    active = set()
+    procs = []
+
+    for proc in psutil.process_iter():
+        info = build_info(proc)
+        if info is None:
             continue
 
-        current.add((pid, create_time))
-        items.append((create_time, proc))
+        active.add((info.pid, info.create_time))
+        procs.append(info)
 
-    items.sort(key=lambda item: item[0])
+    procs.sort(key=lambda info: info.create_time)
 
-    for create_time, proc in items:
-        try:
-            info = proc.info
-            pid = int(info.get("pid", -1))
-            create_time = float(info.get("create_time", 0.0))
-        except (psutil.AccessDenied, psutil.NoSuchProcess, TypeError, ValueError):
+    for info in procs:
+        key = (info.pid, info.create_time)
+        if key in seen and not startup:
             continue
 
-        if (pid, create_time) in seen:
+        started = format_time(info.create_time)
+        status = "[STARTUP]" if startup else "[NEW]"
+        print(status, started, info.pid, info.name, info.exe)
+
+        if is_whitelisted(info.name, info.exe):
+            print("[WHITELISTED]", started, info.pid, info.name)
             continue
 
-        name = str(info.get("name", "unknown") or "unknown")
+        score, reasons = score_process(info)
 
-        exe = ""
-        try:
-            exe = proc.exe()
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            pass
-
-        started = format_time(create_time)
-        print("[NEW]", started, pid, name, exe)
-
-        if is_whitelisted(name):
-            print("[WHITELISTED]", started, pid, name)
-            continue
-
-        result = score_process(exe, name)
-        score = result[0]
-        reasons = result[1]
-
-        if score >= ALERT_THRESHOLD:
+        if score >= WARNING_SCALE:
             for rule in reasons:
                 weight = WEIGHTS.get(rule, 0)
-                print("[SUSPECT]", started, pid, name, score, rule)
-                log_event(pid, name, exe, rule, weight, score)
+                print("[SUSPECT]", started, info.pid, info.name, score, rule)
+                log_event(
+                    info.pid,
+                    info.name,
+                    info.exe,
+                    rule,
+                    weight,
+                    score,
+                )
 
-    return current
+    return active
 
 
 def monitor_loop(sleep_interval=2.0):
-    seen = set()
+    seen = monitor_once(set(), startup=True)
 
     while True:
         seen = monitor_once(seen)
