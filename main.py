@@ -1,7 +1,6 @@
-from db import init_db
-from monitor import monitor_loop
+from gui import AntivirusApp
 
 
 if __name__ == "__main__":
-    init_db()
-    monitor_loop()
+    app = AntivirusApp()
+    app.mainloop()

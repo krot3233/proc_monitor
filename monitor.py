@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 
 import psutil
@@ -81,9 +80,12 @@ def monitor_once(seen, startup=False):
     return active
 
 
-def monitor_loop(sleep_interval=2.0):
+def monitor_loop(stop_event, sleep_interval=2.0):
+    if stop_event.is_set():
+        return
+
     seen = monitor_once(set(), startup=True)
 
-    while True:
+    while not stop_event.is_set():
         seen = monitor_once(seen)
-        time.sleep(sleep_interval)
+        stop_event.wait(sleep_interval)

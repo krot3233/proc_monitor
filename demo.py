@@ -71,6 +71,20 @@ def combined(folder):
     return subprocess.Popen([str(exe), "-n", str(LIFETIME), "127.0.0.1"])
 
 
+# Тут запускаем Python с подозрительным аргументом, чтобы проверить подпись.
+def signature_check(_folder):
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            f"import time; time.sleep({LIFETIME})",
+            "downloadstring",
+        ]
+    )
+
+
+# Для теста загрузи безопасную DLL через ctypes в свой процесс и оставь его работать.
+# Запусти процесс из Temp или с подозрительным аргументом, иначе проверка DLL не включится.
 SCENARIOS = [
     ("Обычный ping", clean, "0 баллов", False),
     ("Запуск из Temp", bad_path, "bad_path: 30", True),
@@ -79,6 +93,12 @@ SCENARIOS = [
     ("PowerShell с Bypass и Hidden", bad_cmdline, "bad_cmdline: 45", False),
     ("Только EncodedCommand", encoded_command, "bad_cmdline: 15", False),
     ("svchost.exe в Temp", combined, "bad_path + masquerading: 80", True),
+    (
+        "Проверка подписи Python",
+        signature_check,
+        "bad_cmdline: 15; +40, если Python без действительной подписи",
+        False,
+    ),
 ]
 
 
@@ -104,9 +124,6 @@ def run_scenario(number):
 
 
 def main():
-    if os.name != "nt":
-        print("Этот файл работает только в Windows.")
-        return
 
     args = sys.argv[1:]
     if args == ["--list"]:
@@ -131,15 +148,10 @@ def main():
             except ValueError:
                 print("Нужно ввести номер или all.")
                 return
-
-    if any(number < 0 or number >= len(SCENARIOS) for number in numbers):
-        print(f"Номер должен быть от 1 до {len(SCENARIOS)}.")
-        return
-
+            
     for number in numbers:
         run_scenario(number)
 
-    print("\nГотово. Посмотри вывод main.py и события в antivirus.db.")
 
 
 if __name__ == "__main__":

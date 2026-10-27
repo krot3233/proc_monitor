@@ -21,7 +21,6 @@ def init_db():
                 "added_at TEXT, PRIMARY KEY (name, exe))"
             )
         elif "exe" not in cols:
-            # В старой базе вайтлист хранил только имя программы.
             conn.execute("ALTER TABLE whitelist RENAME TO whitelist_legacy")
             conn.execute(
                 "CREATE TABLE whitelist (name TEXT NOT NULL, exe TEXT NOT NULL, "
