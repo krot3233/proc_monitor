@@ -8,7 +8,7 @@ from pathlib import Path
 
 from config import WARNING_SCALE
 
-LIFETIME = 8
+LIFETIME = 30
 WINDOWS = Path(os.environ.get("SystemRoot", r"C:\Windows"))
 SYSTEM32 = WINDOWS / "System32"
 PING = SYSTEM32 / "ping.exe"
@@ -71,34 +71,55 @@ def combined(folder):
     return subprocess.Popen([str(exe), "-n", str(LIFETIME), "127.0.0.1"])
 
 
-# Тут запускаем Python с подозрительным аргументом, чтобы проверить подпись.
+# Запускаем PowerShell с подозрительной строкой, но без сетевых действий.
 def signature_check(_folder):
     return subprocess.Popen(
         [
-            sys.executable,
-            "-c",
-            f"import time; time.sleep({LIFETIME})",
-            "downloadstring",
+            str(POWERSHELL),
+            "-NoProfile",
+            "-Command",
+            f"Write-Output 'downloadstring'; Start-Sleep -Seconds {LIFETIME}",
         ]
     )
 
 
-# Для теста загрузи безопасную DLL через ctypes в свой процесс и оставь его работать.
-# Запусти процесс из Temp или с подозрительным аргументом, иначе проверка DLL не включится.
+# Копия подписана, но лежит во временной папке под именем системной утилиты.
+def signed_lolbin(folder):
+    exe = copy_exe(CMD, folder, "cmd.exe")
+    return subprocess.Popen(
+        [str(exe), "/c", f"ping -n {LIFETIME} 127.0.0.1"]
+    )
+
+
+# Имя и аргументы имитируют mshta с URL; команда только запускает локальный ping.
+def lolbin_url(folder):
+    exe = copy_exe(CMD, folder, "mshta.exe")
+    return subprocess.Popen(
+        [
+            str(exe),
+            "/c",
+            f"ping -n {LIFETIME} 127.0.0.1 & rem http://example.invalid/x.hta",
+        ]
+    )
+
+
+# В каждой записи: название, функция запуска, ожидаемый результат и папка для копии.
 SCENARIOS = [
     ("Обычный ping", clean, "0 баллов", False),
-    ("Запуск из Temp", bad_path, "bad_path: 30", True),
+    ("Подписанный ping из Temp", bad_path, "signed_bad_path: 10 (ниже порога событий 30)", True),
     ("svchost.exe не в System32", masquerading, "masquerading: 50", False),
     ("Office запускает cmd", office_shell, "office_spawns_shell: 60", False),
     ("PowerShell с Bypass и Hidden", bad_cmdline, "bad_cmdline: 45", False),
-    ("Только EncodedCommand", encoded_command, "bad_cmdline: 15", False),
-    ("svchost.exe в Temp", combined, "bad_path + masquerading: 80", True),
+    ("Только EncodedCommand", encoded_command, "bad_cmdline: 15 (ниже порога событий 30)", False),
+    ("svchost.exe в Temp", combined, "masquerading: 50 + signed_bad_path: 10 = 60", True),
     (
-        "Проверка подписи Python",
+        "Проверка подписи PowerShell",
         signature_check,
-        "bad_cmdline: 15; +40, если Python без действительной подписи",
+        "bad_cmdline: 15 (ниже порога событий 30); подпись исполняемого файла проверяется",
         False,
     ),
+    ("Копия cmd.exe в Temp", signed_lolbin, "signed_lolbin_bad_path: 30", True),
+    ("mshta.exe с URL в аргументах", lolbin_url, "bad_cmdline: 30", False),
 ]
 
 
@@ -114,6 +135,7 @@ def run_scenario(number):
     print(f"\nСценарий: {title}")
     print(f"Ожидается: {expected}; порог предупреждения: {WARNING_SCALE}")
 
+    # Временная папка удалится после завершения процесса, в том числе при таймауте.
     with tempfile.TemporaryDirectory(prefix="av_demo_", dir=root) as folder:
         proc = start(Path(folder))
         try:

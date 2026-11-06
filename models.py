@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 
+# Общие сведения о процессе нужны и интерфейсу, и фоновому монитору.
 @dataclass
 class ProcInfo:
     pid: int
